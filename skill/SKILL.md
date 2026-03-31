@@ -99,7 +99,15 @@ motif extract all
 
 #### A2. Prepare Data for Qualitative Analysis
 
-Run the analysis pipeline in vibe-report mode. This strips system noise, applies a 200k token budget, and splits output into multiple agent-friendly files:
+**If the user has the Copilot SDK installed** (`pip install motif-cli[copilot]`), use auto mode for a one-command experience:
+
+```bash
+motif analyze --auto --mode vibe-report
+```
+
+This sends the data to an LLM via the Copilot SDK (1 premium request), parses the analysis, and generates the report automatically. **Skip to the "Done" step below** — everything is handled.
+
+**Otherwise**, run the analysis pipeline in vibe-report mode. This strips system noise, applies a 200k token budget, and splits output into multiple agent-friendly files:
 
 ```bash
 motif analyze --prepare --mode vibe-report
@@ -228,6 +236,16 @@ If a previous analysis exists, **ask the user** whether they want to:
 If no previous analysis exists, proceed directly to C4.
 
 #### C4. Prepare Analysis Data
+
+**If the user has the Copilot SDK installed** (`pip install motif-cli[copilot]`), use auto mode:
+
+```bash
+motif analyze --auto --project <name>
+```
+
+This runs the full pipeline: prepare data → send to LLM via Copilot SDK (1 premium request) → save analysis JSON → generate rules and deploy skill files. **Skip to C7** to present findings.
+
+**Otherwise**, prepare the data for manual agent analysis:
 
 Based on the project choice:
 

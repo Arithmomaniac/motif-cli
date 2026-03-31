@@ -302,27 +302,41 @@ def _resolve_project(project_arg, console):
 
 
 @cli.command()
-@click.option("--prepare", is_flag=True, required=True, help="Prepare analysis data + prompt for the host agent")
+@click.option("--prepare", is_flag=True, default=False, help="Prepare analysis data + prompt for the host agent")
+@click.option("--auto", is_flag=True, default=False, help="Run end-to-end with Copilot SDK (no manual agent step)")
 @click.option("--project", "-p", default=None, help="Project to analyze (default: current directory name)")
 @click.option("--budget", "-b", default=None, type=int, help="Token budget (default: 200000 for vibe-report, 60000 for full)")
 @click.option("--mode", "-m", default="full", type=click.Choice(["full", "vibe-report"]), help="Analysis mode: 'full' for Personalize AI, 'vibe-report' for qualitative vibe report")
+@click.option("--model", "model_name", default=None, help="AI model for --auto (default: claude-sonnet-4.6). Use 'gpt-5-mini' for free on paid plans.")
 @click.option("--stats", is_flag=True, help="Show pipeline stats only, don't write output")
 @click.option("--no-filter", is_flag=True, help="Skip relevance filtering (include all project-scoped conversations)")
 @click.option("--preview", is_flag=True, help="Show session relevance scores without running full analysis")
-def analyze(prepare, project, budget, mode, stats, no_filter, preview):
+def analyze(prepare, auto, project, budget, mode, model_name, stats, no_filter, preview):
     """Analyze extracted conversations for patterns.
 
-    Usage: motif analyze --prepare [--project NAME] [--budget N] [--mode MODE]
+    Usage:
+      motif analyze --prepare [--project NAME] [--budget N] [--mode MODE]
+      motif analyze --auto [--project NAME] [--model MODEL] [--mode MODE]
 
     Modes:
       full         Full Personalize AI analysis (skills, rules, style). Default.
       vibe-report  Qualitative analysis for the shareable vibe report.
                    Strips system noise, puts instructions first.
 
+    --prepare writes analysis data + prompts for manual agent delegation.
+    --auto uses the Copilot SDK to run LLM analysis automatically, then
+    chains into rules/vibe-report generation. Requires: pip install motif-cli[copilot]
+
     The pipeline filters misattributed conversations by checking whether
     file paths in each session match the target project. Use --no-filter
     to disable this, or --preview to inspect scores before running.
     """
+    if not prepare and not auto and not preview:
+        console.print("[red]Specify --prepare or --auto. See 'motif analyze --help'.[/red]")
+        raise SystemExit(1)
+    if prepare and auto:
+        console.print("[red]--prepare and --auto are mutually exclusive.[/red]")
+        raise SystemExit(1)
     from motif.store import load_all_conversations
     from motif.analysis.pipeline import (
         prepare_analysis, scope_to_project, preview_relevance,
@@ -426,11 +440,89 @@ def analyze(prepare, project, budget, mode, stats, no_filter, preview):
     if stats:
         return
 
-    # Write output
+    # Common output setup
     out_dir = get_analysis_dir()
     safe_project = "".join(c if c.isalnum() or c in "-_" else "_" for c in project)
     from datetime import datetime
     timestamp = datetime.now().strftime('%Y-%m-%d-%H%M')
+
+    # ── Auto mode: Copilot SDK end-to-end ────────────────────────────
+    if auto:
+        try:
+            from motif.llm.copilot_backend import (
+                send_to_copilot, DEFAULT_MODEL, _check_sdk_available,
+            )
+            _check_sdk_available()
+        except ImportError as e:
+            console.print(f"[red]{e}[/red]")
+            raise SystemExit(1)
+
+        effective_model = model_name or DEFAULT_MODEL
+
+        # Send pre-prepared data to Copilot SDK
+        analysis = send_to_copilot(
+            output, mode=mode, model=effective_model, console=console,
+        )
+
+        # Save analysis JSON
+        import json as json_mod
+        if mode == "vibe-report":
+            analysis_filename = f"vibe-report-analysis-{timestamp}.json"
+        else:
+            analysis_filename = f"analysis-{safe_project}-{timestamp}.json"
+        analysis_path = out_dir / analysis_filename
+        with open(analysis_path, "w", encoding="utf-8") as f:
+            json_mod.dump(analysis, f, indent=2)
+        console.print(f"\n[green]Analysis saved to:[/green] [cyan]{analysis_path}[/cyan]")
+
+        # Auto-chain into downstream commands
+        if mode == "vibe-report":
+            console.print("\n[bold]Generating vibe report...[/bold]")
+            from motif.report.metrics import compute_all_metrics
+            from motif.report.html import generate_html_report
+            from motif.config import get_motif_dir
+            import webbrowser
+
+            metrics = compute_all_metrics(all_messages)
+            html = generate_html_report(metrics, analysis=analysis, user_name="Vibe Coder")
+
+            reports_dir = get_motif_dir() / "reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            from datetime import datetime as dt2
+            report_path = reports_dir / f"vibe-report-{dt2.now().strftime('%Y-%m-%d-%H%M')}.html"
+            report_path.write_text(html, encoding="utf-8")
+
+            console.print(f"[green]Vibe Report written to:[/green] [cyan]{report_path}[/cyan]")
+            webbrowser.open(report_path.resolve().as_uri())
+        else:
+            console.print("\n[bold]Generating rules and skills...[/bold]")
+            from motif.rules.generator import generate_all, deploy_files
+            from motif.config import get_motif_dir
+
+            gen_dir = get_motif_dir() / "generated"
+            gen_dir.mkdir(parents=True, exist_ok=True)
+
+            project_name = project or _detect_project_name(analysis)
+            generated = generate_all(analysis, gen_dir, project_name)
+
+            for rel_path, content in generated.items():
+                dest = gen_dir / rel_path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(content, encoding="utf-8")
+
+            console.print(f"[green]Generated {len(generated)} files to:[/green] [cyan]{gen_dir}[/cyan]")
+            for rel_path in sorted(generated):
+                console.print(f"  {rel_path}")
+
+            deployed = deploy_files(generated, gen_dir)
+            if deployed:
+                console.print(f"\n[green]Deployed {len(deployed)} skill files:[/green]")
+                for d in deployed:
+                    console.print(f"  [cyan]{d}[/cyan]")
+
+        return
+
+    # ── Prepare mode: write files for manual agent delegation ────────
 
     if mode == "vibe-report" and isinstance(output, list):
         written_paths = []

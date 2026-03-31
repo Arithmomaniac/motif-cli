@@ -96,12 +96,12 @@ Windsurf ²         ┘                                           🔧 CLAUDE.md
 
 ## 🔄 Workflow
 
-1. **Install** — `pip install motif-cli`
+1. **Install** — `pip install motif-cli` (add `pip install motif-cli[copilot]` for auto mode)
 2. **Extract** — `motif extract all` pulls conversations from Cursor, Claude Code, GitHub Copilot CLI, and Copilot in VS Code
 3. **Dashboard** — `motif live` launches the real-time dashboard while you work
 4. **Report** — `motif vibe-report --name "Your Name"` generates your assessment
 
-Want personalized AI config? Use `motif analyze --prepare` followed by `motif rules` to generate CLAUDE.md, .cursorrules, and skill files.
+Want personalized AI config? Use `motif analyze --auto` for a one-command end-to-end analysis, or `motif analyze --prepare` followed by `motif rules` for manual control.
 
 ## 🛠️ Supported Tools
 
@@ -169,9 +169,10 @@ motif list
 
 ### `motif analyze`
 
-Prepare extracted data for pattern analysis. The output is a markdown file containing your conversation data and analysis instructions — your IDE's agent reads it and follows the embedded prompt.
+Prepare extracted data for pattern analysis, or run end-to-end with the Copilot SDK.
 
 ```bash
+# Manual mode: prepare files for your IDE agent
 motif analyze --prepare                           # Analyze current project
 motif analyze --prepare --project myapp           # Specify project
 motif analyze --prepare --mode vibe-report        # Optimized for vibe report flow
@@ -179,9 +180,19 @@ motif analyze --prepare --budget 50000            # Custom token budget
 motif analyze --prepare --preview                 # Preview session relevance scores
 motif analyze --prepare --no-filter               # Skip relevance filtering
 motif analyze --prepare --stats                   # Show pipeline stats only
+
+# Auto mode: Copilot SDK runs the LLM analysis for you (1 premium request)
+motif analyze --auto                              # End-to-end with default model
+motif analyze --auto --mode vibe-report           # Auto vibe report
+motif analyze --auto --model gpt-5-mini           # Free on paid Copilot plans
+motif analyze --auto --project myapp              # Specify project
 ```
 
 Modes: `full` (default) for Personalize AI analysis, `vibe-report` for qualitative vibe report (strips system noise, instructions-first layout, split into agent-friendly batches).
+
+**`--auto` mode** uses the [GitHub Copilot SDK](https://github.com/github/copilot-sdk) to send your conversation data directly to an LLM and automatically chains into `motif rules --apply` (full mode) or `motif vibe-report` (vibe-report mode). Requires `pip install motif-cli[copilot]`.
+
+Default model: `claude-sonnet-4.6` (1x premium request multiplier, best quality for structured analysis). Use `--model gpt-5-mini` for free analysis on paid Copilot plans.
 
 ### `motif rules`
 
