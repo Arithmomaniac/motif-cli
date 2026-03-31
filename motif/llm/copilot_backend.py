@@ -75,26 +75,17 @@ def _parse_json_response(text: str) -> dict:
     )
 
 
-async def _send_and_collect(session, prompt: str) -> str:
+async def _send_and_collect(session, prompt: str, timeout: float = 300) -> str:
     """Send a prompt to a Copilot session and collect the full response."""
-    done = asyncio.Event()
-    response_parts = []
+    response = await session.send_and_wait(
+        {"prompt": prompt},
+        timeout=timeout,
+    )
 
-    def on_event(event):
-        event_type = event.type.value if hasattr(event.type, 'value') else str(event.type)
-        if event_type == "assistant.message":
-            response_parts.append(event.data.content)
-        elif event_type == "session.idle":
-            done.set()
-
-    session.on(on_event)
-    await session.send(prompt)
-    await done.wait()
-
-    if not response_parts:
+    if response is None:
         raise RuntimeError("No response received from Copilot session")
 
-    return response_parts[-1]  # Final complete message
+    return response.data.content
 
 
 async def _run_full_analysis(
@@ -104,18 +95,18 @@ async def _run_full_analysis(
     console: Console,
 ) -> dict:
     """Run single-shot analysis for 'full' mode (Personalize AI)."""
-    from copilot.session import PermissionHandler
-
     console.print(f"  Creating session with [cyan]{model}[/cyan]...")
 
-    async with await client.create_session(
-        on_permission_request=PermissionHandler.deny_all,
-        model=model,
-        infinite_sessions={"enabled": False},
-    ) as session:
+    session = await client.create_session({
+        "model": model,
+    })
+
+    try:
         console.print("  Sending analysis data to LLM...")
         with console.status("[bold green]Analyzing conversations..."):
             response = await _send_and_collect(session, prepared_data)
+    finally:
+        await session.destroy()
 
     console.print("  Parsing JSON response...")
     return _parse_json_response(response)
@@ -165,14 +156,16 @@ async def _run_vibe_report_analysis(
         f"(~{len(prompt) // 4:,} tokens)"
     )
 
-    async with await client.create_session(
-        on_permission_request=PermissionHandler.deny_all,
-        model=model,
-        infinite_sessions={"enabled": False},
-    ) as session:
+    session = await client.create_session({
+        "model": model,
+    })
+
+    try:
         console.print(f"  Creating session with [cyan]{model}[/cyan]...")
         with console.status("[bold green]Analyzing conversations (this may take a minute)..."):
             response = await _send_and_collect(session, prompt)
+    finally:
+        await session.destroy()
 
     console.print("  Parsing JSON response...")
     return _parse_json_response(response)
@@ -206,7 +199,10 @@ def send_to_copilot(
     async def _run():
         from copilot import CopilotClient
 
-        async with CopilotClient() as client:
+        client = CopilotClient()
+        await client.start()
+
+        try:
             if mode == "vibe-report" and isinstance(prepared_output, list):
                 return await _run_vibe_report_analysis(
                     client, prepared_output, model, console,
@@ -215,5 +211,7 @@ def send_to_copilot(
                 return await _run_full_analysis(
                     client, prepared_output, model, console,
                 )
+        finally:
+            await client.stop()
 
     return asyncio.run(_run())
