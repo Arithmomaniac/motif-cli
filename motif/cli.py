@@ -310,8 +310,9 @@ def _resolve_project(project_arg, console):
 @click.option("--model", "model_name", default=None, help="AI model for --auto (default: claude-sonnet-4.6). Use 'gpt-5-mini' for free on paid plans.")
 @click.option("--stats", is_flag=True, help="Show pipeline stats only, don't write output")
 @click.option("--no-filter", is_flag=True, help="Skip relevance filtering (include all project-scoped conversations)")
+@click.option("--min-turns", default=2, type=int, help="Minimum user messages per session (default: 2, filters single-turn/non-interactive sessions; 1 to disable)")
 @click.option("--preview", is_flag=True, help="Show session relevance scores without running full analysis")
-def analyze(prepare, auto, project, budget, mode, model_name, stats, no_filter, preview):
+def analyze(prepare, auto, project, budget, mode, model_name, stats, no_filter, min_turns, preview):
     """Analyze extracted conversations for patterns.
 
     Usage:
@@ -404,6 +405,7 @@ def analyze(prepare, auto, project, budget, mode, model_name, stats, no_filter, 
         all_messages, project, budget,
         skip_relevance_filter=no_filter,
         mode=mode,
+        min_turns=min_turns,
     )
 
     # Show stats
@@ -421,6 +423,17 @@ def analyze(prepare, auto, project, budget, mode, model_name, stats, no_filter, 
         no_paths = pipeline_stats.get("relevance_sessions_no_paths", 0)
         console.print(f"  Relevance filter: all sessions passed ({no_paths} had no file paths)")
     console.print(f"  After relevance filter: {pipeline_stats['relevance_count']}")
+
+    mt_removed = pipeline_stats.get("min_turns_sessions_removed", 0)
+    mt_msgs = pipeline_stats.get("min_turns_messages_removed", 0)
+    mt_threshold = pipeline_stats.get("min_turns", 2)
+    if mt_removed > 0:
+        console.print(f"  [yellow]Min-turns filter: removed {mt_removed} sessions ({mt_msgs} messages) — fewer than {mt_threshold} user messages[/yellow]")
+    elif mt_threshold <= 1:
+        console.print(f"  Min-turns filter: [dim]disabled (--min-turns {mt_threshold})[/dim]")
+    else:
+        console.print(f"  Min-turns filter: all sessions passed (≥{mt_threshold} user messages)")
+    console.print(f"  After min-turns filter: {pipeline_stats['min_turns_count']}")
 
     console.print(f"  After noise filter: {pipeline_stats['filtered_count']} (dropped {pipeline_stats['dropped_noise']})")
     if pipeline_stats.get("system_noise_stripped_tokens"):

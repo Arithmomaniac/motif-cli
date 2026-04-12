@@ -179,6 +179,7 @@ motif analyze --prepare --mode vibe-report        # Optimized for vibe report fl
 motif analyze --prepare --budget 50000            # Custom token budget
 motif analyze --prepare --preview                 # Preview session relevance scores
 motif analyze --prepare --no-filter               # Skip relevance filtering
+motif analyze --prepare --min-turns 1              # Include single-turn sessions
 motif analyze --prepare --stats                   # Show pipeline stats only
 
 # Auto mode: Copilot SDK runs the LLM analysis for you (1 premium request)

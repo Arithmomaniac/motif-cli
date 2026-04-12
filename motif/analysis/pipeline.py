@@ -224,6 +224,44 @@ def filter_misattributed(
     return kept, stats
 
 
+def filter_min_turns(
+    messages: list[dict],
+    min_turns: int = 2,
+) -> tuple[list[dict], dict]:
+    """Remove sessions with fewer than *min_turns* user messages.
+
+    A "turn" is counted as one user message — assistant messages are not
+    counted because a single user prompt can generate many assistant messages
+    (tool calls, multi-step work).  The default of 2 filters out single-turn
+    sessions which are typically programmatic SDK calls, fire-and-forget
+    commands, or aborted sessions rather than genuine interactive coding.
+
+    Returns (kept_messages, filter_stats).
+    """
+    if min_turns <= 0:
+        return messages, {"min_turns_sessions_removed": 0, "min_turns_messages_removed": 0, "min_turns": min_turns}
+
+    sessions = _group_by_session(messages)
+    kept: list[dict] = []
+    removed_count = 0
+    removed_msg_count = 0
+
+    for _sid, session_msgs in sessions.items():
+        user_count = sum(1 for m in session_msgs if m.get("role") == "user")
+        if user_count >= min_turns:
+            kept.extend(session_msgs)
+        else:
+            removed_count += 1
+            removed_msg_count += len(session_msgs)
+
+    stats = {
+        "min_turns_sessions_removed": removed_count,
+        "min_turns_messages_removed": removed_msg_count,
+        "min_turns": min_turns,
+    }
+    return kept, stats
+
+
 def preview_relevance(
     messages: list[dict],
     project: str,
@@ -818,11 +856,13 @@ def prepare_analysis(
     budget: int | None = None,
     skip_relevance_filter: bool = False,
     mode: str = "full",
+    min_turns: int = 2,
 ) -> tuple[str | list[tuple[str, str]], dict]:
     """Run the full pipeline and return formatted output + stats.
 
-    Stages: scope -> relevance filter -> prepare -> noise filter
-            -> [system noise strip for vibe-report] -> budget -> format.
+    Stages: scope -> relevance filter -> min-turns filter -> prepare
+            -> noise filter -> [system noise strip for vibe-report]
+            -> budget -> format.
 
     mode="full" (default): Personalize AI flow with full analysis prompt.
         Returns (single_string, stats).
@@ -848,8 +888,12 @@ def prepare_analysis(
         relevance_filtered, relevance_stats = filter_misattributed(scoped, project)
     relevance_count = len(relevance_filtered)
 
+    # Stage 2b: Min-turns filter (skip single-turn / non-interactive sessions)
+    min_turns_filtered, min_turns_stats = filter_min_turns(relevance_filtered, min_turns)
+    min_turns_count = len(min_turns_filtered)
+
     # Stage 3: Prepare (truncate)
-    prepared = prepare_messages(relevance_filtered)
+    prepared = prepare_messages(min_turns_filtered)
 
     # Stage 4: Filter noise
     filtered, noise_stats = filter_noise(prepared)
@@ -883,6 +927,10 @@ def prepare_analysis(
         "relevance_sessions_removed": relevance_stats.get("sessions_removed", 0),
         "relevance_messages_removed": relevance_stats.get("messages_removed", 0),
         "relevance_sessions_no_paths": relevance_stats.get("sessions_no_paths", 0),
+        "min_turns_count": min_turns_count,
+        "min_turns_sessions_removed": min_turns_stats.get("min_turns_sessions_removed", 0),
+        "min_turns_messages_removed": min_turns_stats.get("min_turns_messages_removed", 0),
+        "min_turns": min_turns,
         "filtered_count": filtered_count,
         "final_count": final_count,
         "estimated_tokens": estimated_tokens,
